@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <optional>
 #include <shared_mutex>
@@ -10,13 +11,10 @@
 
 namespace miniredis::server {
 
-/// Потокобезопасное in-memory key-value хранилище.
-///
-/// Модель:
-///   - Много читателей одновременно (shared_lock)
-///   - Писатель — эксклюзивно (unique_lock)
-///
-/// Все операции идемпотентны и не бросают исключений, кроме std::bad_alloc.
+using Clock     = std::chrono::steady_clock;
+using TimePoint = Clock::time_point;
+
+/// Потокобезопасное in-memory key-value хранилище с поддержкой TTL.
 class Store {
 public:
     Store() = default;
@@ -24,31 +22,53 @@ public:
     Store(const Store&) = delete;
     Store& operator=(const Store&) = delete;
 
-    /// Вернуть значение по ключу, если есть.
-    std::optional<std::string> get(std::string_view key) const;
+    // --- Основные операции ---
+
+    /// Вернуть значение по ключу (учитывая TTL).
+    std::optional<std::string> get(std::string_view key);
 
     /// Установить значение. Возвращает true, если ключ был создан,
-    /// и false, если значение было перезаписано.
-    bool set(std::string key, std::string value);
+    /// false — если перезаписан.
+    /// Если ttl_seconds > 0 — устанавливает TTL.
+    bool set(std::string key, std::string value,
+             std::optional<std::int64_t> ttl_seconds = std::nullopt);
 
-    /// Удалить ключ. Возвращает true, если ключ существовал.
+    /// Удалить ключ. Возвращает true, если ключ существовал и был удалён.
     bool del(std::string_view key);
 
-    /// Проверить существование ключа.
-    bool exists(std::string_view key) const;
+    /// Проверить существование ключа (учитывая TTL).
+    bool exists(std::string_view key);
 
-    /// Все ключи (снимок). Порядок неопределён.
-    std::vector<std::string> keys() const;
+    // --- TTL ---
 
-    /// Количество ключей.
-    std::size_t size() const;
+    /// Установить TTL. true — установлен, false — ключа нет.
+    /// Если ttl_seconds <= 0 — ключ удаляется немедленно.
+    bool expire(std::string_view key, std::int64_t ttl_seconds);
 
-    /// Удалить всё.
+    /// Снять TTL. true — снят, false — ключа нет или TTL не было.
+    bool persist(std::string_view key);
+
+    /// Сколько секунд осталось:
+    ///   N >= 0 — осталось
+    ///   -1     — нет TTL
+    ///   -2     — нет ключа
+    std::int64_t ttl(std::string_view key);
+
+    // --- Служебные ---
+
+    std::vector<std::string> keys();
+    std::size_t size();
     void clear();
+    std::size_t sweep_expired();
 
 private:
+    struct Entry {
+        std::string value;
+        std::optional<TimePoint> expire_at;
+    };
+
     mutable std::shared_mutex mutex_;
-    std::unordered_map<std::string, std::string> data_;
+    std::unordered_map<std::string, Entry> data_;
 };
 
 } // namespace miniredis::server

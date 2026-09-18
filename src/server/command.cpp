@@ -95,13 +95,18 @@ RespValue CommandDispatcher::handle_array(const std::vector<RespValue>& args) co
     }
 
     // --- Key/value commands ---
-    if (cmd == "GET")    return cmd_get(args);
-    if (cmd == "SET")    return cmd_set(args);
-    if (cmd == "DEL")    return cmd_del(args);
-    if (cmd == "EXISTS") return cmd_exists(args);
-    if (cmd == "KEYS")   return cmd_keys(args);
-    if (cmd == "TYPE")   return cmd_type(args);
-    if (cmd == "DBSIZE") return cmd_dbsize(args);
+    if (cmd == "GET")     return cmd_get(args);
+    if (cmd == "SET")     return cmd_set(args);
+    if (cmd == "DEL")     return cmd_del(args);
+    if (cmd == "EXISTS")  return cmd_exists(args);
+    if (cmd == "KEYS")    return cmd_keys(args);
+    if (cmd == "TYPE")    return cmd_type(args);
+    if (cmd == "DBSIZE")  return cmd_dbsize(args);
+
+    // --- TTL commands ---
+    if (cmd == "EXPIRE")  return cmd_expire(args);
+    if (cmd == "TTL")     return cmd_ttl(args);
+    if (cmd == "PERSIST") return cmd_persist(args);
 
     return resp::make_error("ERR unknown command '" + cmd + "'");
 }
@@ -123,14 +128,39 @@ RespValue CommandDispatcher::cmd_get(const std::vector<RespValue>& args) const {
 // ---------- SET ----------
 
 RespValue CommandDispatcher::cmd_set(const std::vector<RespValue>& args) const {
-    if (args.size() != 3) {
+    // Формы:
+    //   SET key value
+    //   SET key value EX seconds
+    if (args.size() != 3 && args.size() != 5) {
         return resp::make_error("ERR wrong number of arguments for 'set'");
     }
     auto key = as_string_view(args[1]);
     auto val = as_string_view(args[2]);
     if (!key || !val) return resp::make_error("ERR wrong number of arguments for 'set'");
 
-    store_.set(std::string(*key), std::string(*val));
+    std::optional<std::int64_t> ttl;
+
+    if (args.size() == 5) {
+        auto opt = as_string_view(args[3]);
+        if (!opt) return resp::make_error("ERR syntax error");
+        std::string opt_upper = to_upper(*opt);
+        if (opt_upper != "EX") {
+            return resp::make_error("ERR syntax error");
+        }
+        auto secs_sv = as_string_view(args[4]);
+        if (!secs_sv) return resp::make_error("ERR value is not an integer or out of range");
+        try {
+            std::int64_t secs = std::stoll(std::string(*secs_sv));
+            if (secs <= 0) {
+                return resp::make_error("ERR invalid expire time in 'set' command");
+            }
+            ttl = secs;
+        } catch (...) {
+            return resp::make_error("ERR value is not an integer or out of range");
+        }
+    }
+
+    store_.set(std::string(*key), std::string(*val), ttl);
     return resp::make_simple_string("OK");
 }
 
@@ -204,6 +234,52 @@ RespValue CommandDispatcher::cmd_dbsize(const std::vector<RespValue>& args) cons
         return resp::make_error("ERR wrong number of arguments for 'dbsize'");
     }
     return resp::make_integer(static_cast<std::int64_t>(store_.size()));
+}
+
+// ---------- EXPIRE ----------
+
+RespValue CommandDispatcher::cmd_expire(const std::vector<RespValue>& args) const {
+    if (args.size() != 3) {
+        return resp::make_error("ERR wrong number of arguments for 'expire'");
+    }
+    auto key = as_string_view(args[1]);
+    auto secs_sv = as_string_view(args[2]);
+    if (!key || !secs_sv) {
+        return resp::make_error("ERR wrong number of arguments for 'expire'");
+    }
+
+    std::int64_t secs;
+    try {
+        secs = std::stoll(std::string(*secs_sv));
+    } catch (...) {
+        return resp::make_error("ERR value is not an integer or out of range");
+    }
+
+    bool ok = store_.expire(*key, secs);
+    return resp::make_integer(ok ? 1 : 0);
+}
+
+// ---------- TTL ----------
+
+RespValue CommandDispatcher::cmd_ttl(const std::vector<RespValue>& args) const {
+    if (args.size() != 2) {
+        return resp::make_error("ERR wrong number of arguments for 'ttl'");
+    }
+    auto key = as_string_view(args[1]);
+    if (!key) return resp::make_error("ERR wrong number of arguments for 'ttl'");
+    return resp::make_integer(store_.ttl(*key));
+}
+
+// ---------- PERSIST ----------
+
+RespValue CommandDispatcher::cmd_persist(const std::vector<RespValue>& args) const {
+    if (args.size() != 2) {
+        return resp::make_error("ERR wrong number of arguments for 'persist'");
+    }
+    auto key = as_string_view(args[1]);
+    if (!key) return resp::make_error("ERR wrong number of arguments for 'persist'");
+    bool ok = store_.persist(*key);
+    return resp::make_integer(ok ? 1 : 0);
 }
 
 } // namespace miniredis::server

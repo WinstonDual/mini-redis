@@ -116,3 +116,80 @@ TEST(store_concurrent_set_get) {
     CHECK(v7.has_value());
     CHECK_EQ(*v7, std::string("499"));
 }
+
+
+
+// ---------- TTL тесты ----------
+
+#include <chrono>
+#include <thread>
+
+TEST(store_ttl_no_ttl) {
+    Store s;
+    s.set("k", "v");
+    CHECK_EQ(s.ttl("k"), std::int64_t{-1});
+}
+
+TEST(store_ttl_missing_key) {
+    Store s;
+    CHECK_EQ(s.ttl("nope"), std::int64_t{-2});
+}
+
+TEST(store_ttl_with_set_ex) {
+    Store s;
+    s.set("k", "v", 100);
+    auto t = s.ttl("k");
+    CHECK(t >= 95 && t <= 100);
+}
+
+TEST(store_expire_command) {
+    Store s;
+    s.set("k", "v");
+    CHECK(s.expire("k", 50));
+    auto t = s.ttl("k");
+    CHECK(t >= 45 && t <= 50);
+}
+
+TEST(store_expire_missing_key) {
+    Store s;
+    CHECK(!s.expire("nope", 10));
+}
+
+TEST(store_expire_zero_deletes) {
+    Store s;
+    s.set("k", "v");
+    CHECK(s.expire("k", 0));
+    CHECK(!s.exists("k"));
+}
+
+TEST(store_persist) {
+    Store s;
+    s.set("k", "v", 100);
+    CHECK(s.persist("k"));
+    CHECK_EQ(s.ttl("k"), std::int64_t{-1});
+    CHECK(!s.persist("k"));
+}
+
+TEST(store_key_expires) {
+    Store s;
+    s.set("k", "v", 1);
+    CHECK(s.exists("k"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    CHECK(!s.exists("k"));
+    CHECK(!s.get("k").has_value());
+    CHECK_EQ(s.ttl("k"), std::int64_t{-2});
+}
+
+TEST(store_sweep) {
+    Store s;
+    s.set("a", "1", 1);
+    s.set("b", "2", 1);
+    s.set("c", "3");
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+
+    auto removed = s.sweep_expired();
+    CHECK_EQ(removed, std::size_t{2});
+    CHECK_EQ(s.size(), std::size_t{1});
+    CHECK(s.exists("c"));
+}

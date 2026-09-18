@@ -171,3 +171,46 @@ TEST(cmd_keys_prefix) {
     CHECK(out.find("user:2") != std::string::npos);
     CHECK(out.find("session:1") == std::string::npos);
 }
+
+
+
+// ---------- TTL через команды ----------
+
+TEST(cmd_set_with_ex) {
+    server::Store s; server::CommandDispatcher d(s);
+    CHECK_EQ(run(d, cmd({"SET", "k", "v", "EX", "100"})), std::string("+OK\r\n"));
+    auto out = run(d, cmd({"TTL", "k"}));
+    CHECK(out == ":99\r\n" || out == ":100\r\n");
+}
+
+TEST(cmd_set_invalid_ex) {
+    server::Store s; server::CommandDispatcher d(s);
+    CHECK(run(d, cmd({"SET", "k", "v", "EX", "abc"})).rfind("-ERR", 0) == 0);
+    CHECK(run(d, cmd({"SET", "k", "v", "EX", "0"})).rfind("-ERR", 0) == 0);
+    CHECK(run(d, cmd({"SET", "k", "v", "XX", "5"})).rfind("-ERR", 0) == 0);
+}
+
+TEST(cmd_expire) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"SET", "k", "v"}));
+    CHECK_EQ(run(d, cmd({"EXPIRE", "k", "50"})), std::string(":1\r\n"));
+    CHECK_EQ(run(d, cmd({"EXPIRE", "nope", "50"})), std::string(":0\r\n"));
+}
+
+TEST(cmd_ttl) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"SET", "k", "v"}));
+    CHECK_EQ(run(d, cmd({"TTL", "k"})), std::string(":-1\r\n"));
+    run(d, cmd({"SET", "k2", "v", "EX", "100"}));
+    auto out = run(d, cmd({"TTL", "k2"}));
+    CHECK(out == ":99\r\n" || out == ":100\r\n");
+    CHECK_EQ(run(d, cmd({"TTL", "nope"})), std::string(":-2\r\n"));
+}
+
+TEST(cmd_persist) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"SET", "k", "v", "EX", "100"}));
+    CHECK_EQ(run(d, cmd({"PERSIST", "k"})), std::string(":1\r\n"));
+    CHECK_EQ(run(d, cmd({"TTL", "k"})), std::string(":-1\r\n"));
+    CHECK_EQ(run(d, cmd({"PERSIST", "k"})), std::string(":0\r\n"));
+}

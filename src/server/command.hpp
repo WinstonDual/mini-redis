@@ -29,6 +29,9 @@ private:
     resp::RespValue cmd_keys(const std::vector<resp::RespValue>& args) const;
     resp::RespValue cmd_type(const std::vector<resp::RespValue>& args) const;
     resp::RespValue cmd_dbsize(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_expire(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_ttl(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_persist(const std::vector<resp::RespValue>& args) const;
 
     Store& store_;
 };
