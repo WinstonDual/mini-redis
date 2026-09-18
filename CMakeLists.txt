@@ -20,6 +20,7 @@ endif()
 add_library(miniredis_core STATIC
     src/net/socket.cpp
     src/resp/serializer.cpp
+    src/resp/parser.cpp
 )
 
 target_include_directories(miniredis_core PUBLIC src)
@@ -33,20 +34,21 @@ target_link_libraries(mini-redis PRIVATE miniredis_core)
 add_executable(mini-redis-tests
     src/tests/test_main.cpp
     src/tests/test_serializer.cpp
+    src/tests/test_parser.cpp
 )
 target_link_libraries(mini-redis-tests PRIVATE miniredis_core)
 
 # --- Warnings ---
 if(MSVC)
-    target_compile_options(miniredis_core PRIVATE /W4)
-    target_compile_options(mini-redis    PRIVATE /W4)
-    target_compile_options(mini-redis-tests PRIVATE /W4)
+    target_compile_options(miniredis_core     PRIVATE /W4)
+    target_compile_options(mini-redis         PRIVATE /W4)
+    target_compile_options(mini-redis-tests   PRIVATE /W4)
 else()
-    target_compile_options(miniredis_core PRIVATE -Wall -Wextra -Wpedantic)
-    target_compile_options(mini-redis     PRIVATE -Wall -Wextra -Wpedantic)
-    target_compile_options(mini-redis-tests PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(miniredis_core     PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(mini-redis         PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(mini-redis-tests   PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 # --- CTest ---
 enable_testing()
-add_test(NAME resp_serializer COMMAND mini-redis-tests)
+add_test(NAME resp_tests COMMAND mini-redis-tests)
