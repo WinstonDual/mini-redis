@@ -9,24 +9,44 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# Windows: линкуем Winsock
+# --- Платформенные библиотеки ---
 if(WIN32)
     set(PLATFORM_LIBS ws2_32)
 else()
     set(PLATFORM_LIBS pthread)
 endif()
 
-add_executable(mini-redis
-    src/main.cpp
+# --- Библиотека с общей логикой (net + resp) ---
+add_library(miniredis_core STATIC
     src/net/socket.cpp
+    src/resp/serializer.cpp
 )
 
-target_include_directories(mini-redis PRIVATE src)
-target_link_libraries(mini-redis PRIVATE ${PLATFORM_LIBS})
+target_include_directories(miniredis_core PUBLIC src)
+target_link_libraries(miniredis_core PUBLIC ${PLATFORM_LIBS})
 
-# Warnings
+# --- Основной исполняемый файл ---
+add_executable(mini-redis src/main.cpp)
+target_link_libraries(mini-redis PRIVATE miniredis_core)
+
+# --- Тесты ---
+add_executable(mini-redis-tests
+    src/tests/test_main.cpp
+    src/tests/test_serializer.cpp
+)
+target_link_libraries(mini-redis-tests PRIVATE miniredis_core)
+
+# --- Warnings ---
 if(MSVC)
-    target_compile_options(mini-redis PRIVATE /W4)
+    target_compile_options(miniredis_core PRIVATE /W4)
+    target_compile_options(mini-redis    PRIVATE /W4)
+    target_compile_options(mini-redis-tests PRIVATE /W4)
 else()
-    target_compile_options(mini-redis PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(miniredis_core PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(mini-redis     PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(mini-redis-tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+# --- CTest ---
+enable_testing()
+add_test(NAME resp_serializer COMMAND mini-redis-tests)
