@@ -107,6 +107,14 @@ RespValue CommandDispatcher::handle_array(const std::vector<RespValue>& args) co
     if (cmd == "EXPIRE")  return cmd_expire(args);
     if (cmd == "TTL")     return cmd_ttl(args);
     if (cmd == "PERSIST") return cmd_persist(args);
+    // --- List commands ---
+    if (cmd == "LPUSH")  return cmd_lpush(args);
+    if (cmd == "RPUSH")  return cmd_rpush(args);
+    if (cmd == "LRANGE") return cmd_lrange(args);
+    if (cmd == "LLEN")   return cmd_llen(args);
+    if (cmd == "LPOP")   return cmd_lpop(args);
+    if (cmd == "RPOP")   return cmd_rpop(args);
+    if (cmd == "LINDEX") return cmd_lindex(args);
 
     return resp::make_error("ERR unknown command '" + cmd + "'");
 }
@@ -120,7 +128,12 @@ RespValue CommandDispatcher::cmd_get(const std::vector<RespValue>& args) const {
     auto key = as_string_view(args[1]);
     if (!key) return resp::make_error("ERR wrong number of arguments for 'get'");
 
-    auto value = store_.get(*key);
+    std::string t = store_.type(*key);
+    if (t != "string" && t != "none") {
+        return resp::make_error("WRONGTYPE Operation against a key holding the wrong kind of value");
+    }
+
+    auto value = store_.get_string(*key);
     if (!value) return resp::make_null_bulk();
     return resp::make_bulk_string(std::move(*value));
 }
@@ -160,7 +173,7 @@ RespValue CommandDispatcher::cmd_set(const std::vector<RespValue>& args) const {
         }
     }
 
-    store_.set(std::string(*key), std::string(*val), ttl);
+        store_.set_string(std::string(*key), std::string(*val), ttl);
     return resp::make_simple_string("OK");
 }
 
@@ -221,10 +234,7 @@ RespValue CommandDispatcher::cmd_type(const std::vector<RespValue>& args) const 
     auto key = as_string_view(args[1]);
     if (!key) return resp::make_error("ERR wrong number of arguments for 'type'");
 
-    if (store_.exists(*key)) {
-        return resp::make_simple_string("string");
-    }
-    return resp::make_simple_string("none");
+    return resp::make_simple_string(store_.type(*key));
 }
 
 // ---------- DBSIZE ----------
@@ -280,6 +290,148 @@ RespValue CommandDispatcher::cmd_persist(const std::vector<RespValue>& args) con
     if (!key) return resp::make_error("ERR wrong number of arguments for 'persist'");
     bool ok = store_.persist(*key);
     return resp::make_integer(ok ? 1 : 0);
+}
+
+// ---------- Lists ----------
+
+namespace {
+
+constexpr const char* WRONGTYPE_MSG =
+    "WRONGTYPE Operation against a key holding the wrong kind of value";
+
+/// Извлечь целое число из RESP-значения. nullopt при неудаче.
+std::optional<std::int64_t> as_int(const RespValue& v) {
+    auto sv = as_string_view(v);
+    if (!sv) return std::nullopt;
+    try {
+        return std::stoll(std::string(*sv));
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+} // namespace
+
+RespValue CommandDispatcher::cmd_lpush(const std::vector<RespValue>& args) const {
+    if (args.size() < 3) {
+        return resp::make_error("ERR wrong number of arguments for 'lpush'");
+    }
+    auto key = as_string_view(args[1]);
+    if (!key) return resp::make_error("ERR wrong number of arguments for 'lpush'");
+
+    std::vector<std::string> values;
+    values.reserve(args.size() - 2);
+    for (std::size_t i = 2; i < args.size(); ++i) {
+        auto v = as_string_view(args[i]);
+        if (!v) return resp::make_error("ERR wrong number of arguments for 'lpush'");
+        values.emplace_back(*v);
+    }
+
+    auto len = store_.list_push_left(*key, std::move(values));
+    if (!len) return resp::make_error(WRONGTYPE_MSG);
+    return resp::make_integer(static_cast<std::int64_t>(*len));
+}
+
+RespValue CommandDispatcher::cmd_rpush(const std::vector<RespValue>& args) const {
+    if (args.size() < 3) {
+        return resp::make_error("ERR wrong number of arguments for 'rpush'");
+    }
+    auto key = as_string_view(args[1]);
+    if (!key) return resp::make_error("ERR wrong number of arguments for 'rpush'");
+
+    std::vector<std::string> values;
+    values.reserve(args.size() - 2);
+    for (std::size_t i = 2; i < args.size(); ++i) {
+        auto v = as_string_view(args[i]);
+        if (!v) return resp::make_error("ERR wrong number of arguments for 'rpush'");
+        values.emplace_back(*v);
+    }
+
+    auto len = store_.list_push_right(*key, std::move(values));
+    if (!len) return resp::make_error(WRONGTYPE_MSG);
+    return resp::make_integer(static_cast<std::int64_t>(*len));
+}
+
+RespValue CommandDispatcher::cmd_lrange(const std::vector<RespValue>& args) const {
+    if (args.size() != 4) {
+        return resp::make_error("ERR wrong number of arguments for 'lrange'");
+    }
+    auto key = as_string_view(args[1]);
+    auto start_opt = as_int(args[2]);
+    auto stop_opt  = as_int(args[3]);
+    if (!key || !start_opt || !stop_opt) {
+        return resp::make_error("ERR value is not an integer or out of range");
+    }
+
+    auto items = store_.list_range(*key, *start_opt, *stop_opt);
+    if (!items) return resp::make_error(WRONGTYPE_MSG);
+
+    std::vector<RespValue> out;
+    out.reserve(items->size());
+    for (auto& s : *items) {
+        out.push_back(resp::make_bulk_string(std::move(s)));
+    }
+    return resp::make_array(std::move(out));
+}
+
+RespValue CommandDispatcher::cmd_llen(const std::vector<RespValue>& args) const {
+    if (args.size() != 2) {
+        return resp::make_error("ERR wrong number of arguments for 'llen'");
+    }
+    auto key = as_string_view(args[1]);
+    if (!key) return resp::make_error("ERR wrong number of arguments for 'llen'");
+
+    auto len = store_.list_length(*key);
+    if (!len) return resp::make_error(WRONGTYPE_MSG);
+    return resp::make_integer(static_cast<std::int64_t>(*len));
+}
+
+RespValue CommandDispatcher::cmd_lpop(const std::vector<RespValue>& args) const {
+    if (args.size() != 2) {
+        return resp::make_error("ERR wrong number of arguments for 'lpop'");
+    }
+    auto key = as_string_view(args[1]);
+    if (!key) return resp::make_error("ERR wrong number of arguments for 'lpop'");
+
+    std::string t = store_.type(*key);
+    if (t != "list" && t != "none") return resp::make_error(WRONGTYPE_MSG);
+
+    auto v = store_.list_pop_left(*key);
+    if (!v) return resp::make_null_bulk();
+    return resp::make_bulk_string(std::move(*v));
+}
+
+RespValue CommandDispatcher::cmd_rpop(const std::vector<RespValue>& args) const {
+    if (args.size() != 2) {
+        return resp::make_error("ERR wrong number of arguments for 'rpop'");
+    }
+    auto key = as_string_view(args[1]);
+    if (!key) return resp::make_error("ERR wrong number of arguments for 'rpop'");
+
+    std::string t = store_.type(*key);
+    if (t != "list" && t != "none") return resp::make_error(WRONGTYPE_MSG);
+
+    auto v = store_.list_pop_right(*key);
+    if (!v) return resp::make_null_bulk();
+    return resp::make_bulk_string(std::move(*v));
+}
+
+RespValue CommandDispatcher::cmd_lindex(const std::vector<RespValue>& args) const {
+    if (args.size() != 3) {
+        return resp::make_error("ERR wrong number of arguments for 'lindex'");
+    }
+    auto key = as_string_view(args[1]);
+    auto idx = as_int(args[2]);
+    if (!key || !idx) {
+        return resp::make_error("ERR value is not an integer or out of range");
+    }
+
+    std::string t = store_.type(*key);
+    if (t != "list" && t != "none") return resp::make_error(WRONGTYPE_MSG);
+
+    auto v = store_.list_index(*key, *idx);
+    if (!v) return resp::make_null_bulk();
+    return resp::make_bulk_string(std::move(*v));
 }
 
 } // namespace miniredis::server

@@ -89,3 +89,21 @@ inline int run_all() {
             throw ::mini_test::AssertionFailure(_oss.str());              \
         }                                                                 \
     } while (0)
+
+/// Проверить, что optional содержит значение и оно равно ожидаемому.
+#define CHECK_OPT_EQ(opt_expr, expected)                                  \
+    do {                                                                  \
+        auto&& _opt = (opt_expr);                                         \
+        if (!_opt.has_value()) {                                          \
+            std::ostringstream _oss;                                      \
+            _oss << __FILE__ << ":" << __LINE__                           \
+                 << "  CHECK_OPT_EQ(" #opt_expr ") has no value";         \
+            throw ::mini_test::AssertionFailure(_oss.str());              \
+        }                                                                 \
+        if (!(*_opt == (expected))) {                                     \
+            std::ostringstream _oss;                                      \
+            _oss << __FILE__ << ":" << __LINE__                           \
+                 << "  CHECK_OPT_EQ(" #opt_expr ", " #expected ") failed";\
+            throw ::mini_test::AssertionFailure(_oss.str());              \
+        }                                                                 \
+    } while (0)

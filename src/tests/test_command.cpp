@@ -214,3 +214,76 @@ TEST(cmd_persist) {
     CHECK_EQ(run(d, cmd({"TTL", "k"})), std::string(":-1\r\n"));
     CHECK_EQ(run(d, cmd({"PERSIST", "k"})), std::string(":0\r\n"));
 }
+
+// ---------- Lists ----------
+
+TEST(cmd_lpush_rpush) {
+    server::Store s; server::CommandDispatcher d(s);
+    CHECK_EQ(run(d, cmd({"RPUSH", "k", "a", "b"})), std::string(":2\r\n"));
+    CHECK_EQ(run(d, cmd({"RPUSH", "k", "c"})),      std::string(":3\r\n"));
+    CHECK_EQ(run(d, cmd({"LPUSH", "k", "z"})),      std::string(":4\r\n"));
+
+    auto out = run(d, cmd({"LRANGE", "k", "0", "-1"}));
+    // z a b c
+    CHECK(out.find("z") != std::string::npos);
+    CHECK(out.find("a") != std::string::npos);
+    CHECK(out.find("c") != std::string::npos);
+}
+
+TEST(cmd_llen) {
+    server::Store s; server::CommandDispatcher d(s);
+    CHECK_EQ(run(d, cmd({"LLEN", "k"})), std::string(":0\r\n"));
+    run(d, cmd({"RPUSH", "k", "a", "b", "c"}));
+    CHECK_EQ(run(d, cmd({"LLEN", "k"})), std::string(":3\r\n"));
+}
+
+TEST(cmd_lrange_basic) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"RPUSH", "k", "a", "b", "c", "d"}));
+
+    auto out = run(d, cmd({"LRANGE", "k", "1", "2"}));
+    // $1\r\nb\r\n$1\r\nc\r\n  внутри массива из 2 элементов
+    CHECK(out.rfind("*2\r\n", 0) == 0);
+    CHECK(out.find("b") != std::string::npos);
+    CHECK(out.find("c") != std::string::npos);
+    CHECK(out.find("a") == std::string::npos);
+}
+
+TEST(cmd_lpop_rpop) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"RPUSH", "k", "a", "b", "c"}));
+
+    CHECK_EQ(run(d, cmd({"LPOP", "k"})), std::string("$1\r\na\r\n"));
+    CHECK_EQ(run(d, cmd({"RPOP", "k"})), std::string("$1\r\nc\r\n"));
+    CHECK_EQ(run(d, cmd({"LPOP", "k"})), std::string("$1\r\nb\r\n"));
+    CHECK_EQ(run(d, cmd({"LPOP", "k"})), std::string("$-1\r\n"));  // пусто
+}
+
+TEST(cmd_lindex_cmd) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"RPUSH", "k", "a", "b", "c"}));
+
+    CHECK_EQ(run(d, cmd({"LINDEX", "k", "0"})),  std::string("$1\r\na\r\n"));
+    CHECK_EQ(run(d, cmd({"LINDEX", "k", "-1"})), std::string("$1\r\nc\r\n"));
+    CHECK_EQ(run(d, cmd({"LINDEX", "k", "99"})), std::string("$-1\r\n"));
+}
+
+TEST(cmd_wrongtype_get_on_list) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"RPUSH", "k", "a"}));
+    auto out = run(d, cmd({"GET", "k"}));
+    CHECK(out.rfind("-WRONGTYPE", 0) == 0);
+}
+
+TEST(cmd_wrongtype_lpush_on_string) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"SET", "k", "hello"}));
+    auto out = run(d, cmd({"LPUSH", "k", "a"}));
+    CHECK(out.rfind("-WRONGTYPE", 0) == 0);
+}
+
+TEST(cmd_type_list) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"RPUSH", "k", "a"}));
+    CHECK_EQ(run(d, cmd({"TYPE", "k"})), std::string("+list\r\n"));
+}

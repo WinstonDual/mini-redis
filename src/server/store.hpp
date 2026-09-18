@@ -2,11 +2,14 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <deque>
 #include <optional>
 #include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace miniredis::server {
@@ -14,56 +17,98 @@ namespace miniredis::server {
 using Clock     = std::chrono::steady_clock;
 using TimePoint = Clock::time_point;
 
-/// Потокобезопасное in-memory key-value хранилище с поддержкой TTL.
+// ---------- Типы значений ----------
+
+/// Строка (значение по умолчанию для SET/GET).
+struct StringValue {
+    std::string data;
+};
+
+/// Список строк. std::deque даёт O(1) вставку/удаление с обоих концов.
+struct ListValue {
+    std::deque<std::string> items;
+};
+
+/// Одно из поддерживаемых типов значений.
+/// Порядок альтернатив в variant менять не стоит — на нём основаны некоторые проверки.
+using Value = std::variant<StringValue, ListValue>;
+
+/// Потокобезопасное in-memory key-value хранилище с поддержкой TTL и типов.
 class Store {
 public:
     Store() = default;
-
     Store(const Store&) = delete;
     Store& operator=(const Store&) = delete;
 
-    // --- Основные операции ---
+    // ---- Общее ----
 
-    /// Вернуть значение по ключу (учитывая TTL).
-    std::optional<std::string> get(std::string_view key);
-
-    /// Установить значение. Возвращает true, если ключ был создан,
-    /// false — если перезаписан.
-    /// Если ttl_seconds > 0 — устанавливает TTL.
-    bool set(std::string key, std::string value,
-             std::optional<std::int64_t> ttl_seconds = std::nullopt);
-
-    /// Удалить ключ. Возвращает true, если ключ существовал и был удалён.
+    /// Удалить ключ. true — был и удалён, false — не было.
     bool del(std::string_view key);
 
-    /// Проверить существование ключа (учитывая TTL).
+    /// Существует ли ключ (учитывая TTL).
     bool exists(std::string_view key);
 
-    // --- TTL ---
+    /// Тип значения: "string", "list", "none".
+    std::string type(std::string_view key);
 
-    /// Установить TTL. true — установлен, false — ключа нет.
-    /// Если ttl_seconds <= 0 — ключ удаляется немедленно.
-    bool expire(std::string_view key, std::int64_t ttl_seconds);
-
-    /// Снять TTL. true — снят, false — ключа нет или TTL не было.
-    bool persist(std::string_view key);
-
-    /// Сколько секунд осталось:
-    ///   N >= 0 — осталось
-    ///   -1     — нет TTL
-    ///   -2     — нет ключа
-    std::int64_t ttl(std::string_view key);
-
-    // --- Служебные ---
-
+    /// Все живые ключи.
     std::vector<std::string> keys();
+
+    /// Количество живых ключей.
     std::size_t size();
+
+    /// Удалить всё.
     void clear();
+
+    /// Удалить все истёкшие ключи. Возвращает их число.
     std::size_t sweep_expired();
+
+    // ---- Строки ----
+
+    /// true — создан, false — перезаписан.
+    bool set_string(std::string key, std::string value,
+                    std::optional<std::int64_t> ttl_seconds = std::nullopt);
+
+    /// Значение по ключу, если это строка.
+    /// nullopt — если ключа нет или тип не строка.
+    /// (Различие проверяется через type() — WRONGTYPE обрабатывается в командах.)
+    std::optional<std::string> get_string(std::string_view key);
+
+    // ---- Списки ----
+
+    /// Вставить в начало (слева). Возвращает новую длину или
+    /// std::nullopt если ключ существует и он не список (WRONGTYPE).
+    std::optional<std::size_t> list_push_left(std::string_view key,
+                                              std::vector<std::string> values);
+
+    /// Вставить в конец (справа).
+    std::optional<std::size_t> list_push_right(std::string_view key,
+                                               std::vector<std::string> values);
+
+    /// Длина списка. nullopt — ключа нет или не список.
+    std::optional<std::size_t> list_length(std::string_view key);
+
+    /// Элементы [start, stop] включительно, с поддержкой отрицательных индексов.
+    /// Возвращает список строк. nullopt — ключа нет или не список.
+    std::optional<std::vector<std::string>>
+    list_range(std::string_view key, std::int64_t start, std::int64_t stop);
+
+    /// Удалить и вернуть элемент с начала. nullopt — если пусто/нет/не список.
+    std::optional<std::string> list_pop_left(std::string_view key);
+    std::optional<std::string> list_pop_right(std::string_view key);
+
+    /// Элемент по индексу (с поддержкой отрицательных). nullopt — нет.
+    std::optional<std::string> list_index(std::string_view key, std::int64_t index);
+
+    // ---- TTL ----
+
+    bool expire(std::string_view key, std::int64_t ttl_seconds);
+    bool persist(std::string_view key);
+    std::int64_t ttl(std::string_view key);
 
 private:
     struct Entry {
-        std::string value;
+        Value value;
         std::optional<TimePoint> expire_at;
     };
 

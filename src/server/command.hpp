@@ -32,6 +32,14 @@ private:
     resp::RespValue cmd_expire(const std::vector<resp::RespValue>& args) const;
     resp::RespValue cmd_ttl(const std::vector<resp::RespValue>& args) const;
     resp::RespValue cmd_persist(const std::vector<resp::RespValue>& args) const;
+    // --- Lists ---
+    resp::RespValue cmd_lpush(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_rpush(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_lrange(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_llen(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_lpop(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_rpop(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_lindex(const std::vector<resp::RespValue>& args) const;
 
     Store& store_;
 };
