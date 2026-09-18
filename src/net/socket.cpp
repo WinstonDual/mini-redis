@@ -4,6 +4,10 @@
 #include <iostream>
 #include <stdexcept>
 
+#include "resp/parser.hpp"
+#include "resp/serializer.hpp"
+#include "server/command.hpp"
+
 #ifdef _WIN32
     #include <ws2tcpip.h>
 #else
@@ -97,9 +101,45 @@ TcpServer::~TcpServer() {
     }
 }
 
+namespace {
+
+/// Обслуживание одного клиента: читает байты, парсит RESP, отвечает.
+void serve_client(socket_t client) {
+    resp::RespParser parser;
+    server::CommandDispatcher dispatcher;
+
+    char buf[4096];
+
+    for (;;) {
+        int n = ::recv(client, buf, sizeof(buf), 0);
+        if (n <= 0) {
+            // 0 = клиент закрыл соединение; <0 = ошибка.
+            break;
+        }
+
+        parser.feed(std::string_view(buf, static_cast<std::size_t>(n)));
+
+        try {
+            while (auto value = parser.try_parse()) {
+                auto reply = dispatcher.dispatch(*value);
+                std::string bytes = resp::serialize(reply);
+                if (::send(client, bytes.data(),
+                           static_cast<int>(bytes.size()), 0) <= 0) {
+                    return; // не смогли отправить — закрываем
+                }
+            }
+        } catch (const resp::ProtocolError& e) {
+            std::string err = resp::serialize(
+                resp::make_error(std::string("ERR Protocol error: ") + e.what()));
+            ::send(client, err.data(), static_cast<int>(err.size()), 0);
+            return; // после ошибки протокола соединение закрываем
+        }
+    }
+}
+
+} // namespace
+
 void TcpServer::listen_and_serve() {
-    // ШАГ 1: наивный блокирующий accept — один клиент за раз.
-    // ШАГ 4: заменим на select/epoll + пул потоков.
     for (;;) {
         sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
@@ -113,11 +153,7 @@ void TcpServer::listen_and_serve() {
         }
 
         std::cout << "[mini-redis] client connected\n";
-
-        // Пока отвечаем +PONG (валидный RESP) на любое подключение.
-        const char reply[] = "+PONG\r\n";
-        ::send(client, reply, sizeof(reply) - 1, 0);
-
+        serve_client(client);
         close_socket(client);
         std::cout << "[mini-redis] client disconnected\n";
     }

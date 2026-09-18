@@ -16,11 +16,12 @@ else()
     set(PLATFORM_LIBS pthread)
 endif()
 
-# --- Библиотека с общей логикой (net + resp) ---
+# --- Библиотека с общей логикой (net + resp + server) ---
 add_library(miniredis_core STATIC
     src/net/socket.cpp
     src/resp/serializer.cpp
     src/resp/parser.cpp
+    src/server/command.cpp
 )
 
 target_include_directories(miniredis_core PUBLIC src)
@@ -35,6 +36,7 @@ add_executable(mini-redis-tests
     src/tests/test_main.cpp
     src/tests/test_serializer.cpp
     src/tests/test_parser.cpp
+    src/tests/test_command.cpp
 )
 target_link_libraries(mini-redis-tests PRIVATE miniredis_core)
 
@@ -51,4 +53,4 @@ endif()
 
 # --- CTest ---
 enable_testing()
-add_test(NAME resp_tests COMMAND mini-redis-tests)
+add_test(NAME all_tests COMMAND mini-redis-tests)
