@@ -10,6 +10,7 @@
 #include "resp/parser.hpp"
 #include "resp/serializer.hpp"
 #include "server/command.hpp"
+#include "server/store.hpp"
 
 #ifdef _WIN32
     #include <ws2tcpip.h>
@@ -120,11 +121,11 @@ namespace {
 
 std::atomic<std::uint64_t> g_client_id_counter{0};
 
-/// Обслуживание одного клиента: читает байты, парсит RESP, отвечает.
+/// Обслуживание одного клиента. dispatcher уже привязан к общему Store.
 /// Выполняется в отдельном потоке.
-void serve_client(socket_t client, std::uint64_t client_id) {
+void serve_client(socket_t client, std::uint64_t client_id,
+                  server::CommandDispatcher& dispatcher) {
     resp::RespParser parser;
-    server::CommandDispatcher dispatcher;
 
     char buf[4096];
 
@@ -159,6 +160,11 @@ void serve_client(socket_t client, std::uint64_t client_id) {
 } // namespace
 
 void TcpServer::listen_and_serve() {
+    // Один Store и один Dispatcher на весь сервер.
+    // Живут всё время работы listen_and_serve (т.е. всю жизнь сервера).
+    server::Store store;
+    server::CommandDispatcher dispatcher(store);
+
     for (;;) {
         sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
@@ -174,9 +180,11 @@ void TcpServer::listen_and_serve() {
         std::uint64_t id = ++g_client_id_counter;
         log_line("[mini-redis] client #" + std::to_string(id) + " connected");
 
-        // Запускаем поток, который сам закроет сокет в конце.
-        std::thread([client, id]() {
-            serve_client(client, id);
+        // Поток получает копию client (число) и ссылку на dispatcher.
+        // Ссылка безопасна: dispatcher живёт в стеке listen_and_serve,
+        // которое крутится бесконечно, пока работает сервер.
+        std::thread([client, id, &dispatcher]() {
+            serve_client(client, id, dispatcher);
             close_socket(client);
             log_line("[mini-redis] client #" + std::to_string(id) + " disconnected");
         }).detach();

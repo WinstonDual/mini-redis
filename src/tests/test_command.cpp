@@ -2,6 +2,7 @@
 #include "resp/value.hpp"
 #include "resp/serializer.hpp"
 #include "server/command.hpp"
+#include "server/store.hpp"
 
 #include <string>
 #include <vector>
@@ -10,7 +11,6 @@ using namespace miniredis;
 
 namespace {
 
-// Хелпер: собрать команду как массив bulk-строк.
 resp::RespValue cmd(std::initializer_list<std::string> parts) {
     std::vector<resp::RespValue> arr;
     arr.reserve(parts.size());
@@ -26,58 +26,148 @@ std::string run(server::CommandDispatcher& d, resp::RespValue input) {
 
 } // namespace
 
+// ---------- PING / ECHO / COMMAND ----------
+
 TEST(cmd_ping) {
-    server::CommandDispatcher d;
+    server::Store s; server::CommandDispatcher d(s);
     CHECK_EQ(run(d, cmd({"PING"})), std::string("+PONG\r\n"));
 }
 
 TEST(cmd_ping_with_message) {
-    server::CommandDispatcher d;
+    server::Store s; server::CommandDispatcher d(s);
     CHECK_EQ(run(d, cmd({"PING", "hello"})), std::string("$5\r\nhello\r\n"));
 }
 
 TEST(cmd_ping_lowercase) {
-    server::CommandDispatcher d;
+    server::Store s; server::CommandDispatcher d(s);
     CHECK_EQ(run(d, cmd({"ping"})), std::string("+PONG\r\n"));
 }
 
 TEST(cmd_ping_too_many_args) {
-    server::CommandDispatcher d;
+    server::Store s; server::CommandDispatcher d(s);
     auto out = run(d, cmd({"PING", "a", "b"}));
-    CHECK(out.rfind("-ERR", 0) == 0); // начинается с "-ERR"
+    CHECK(out.rfind("-ERR", 0) == 0);
 }
 
 TEST(cmd_echo) {
-    server::CommandDispatcher d;
+    server::Store s; server::CommandDispatcher d(s);
     CHECK_EQ(run(d, cmd({"ECHO", "hello world"})),
              std::string("$11\r\nhello world\r\n"));
 }
 
 TEST(cmd_echo_no_args) {
-    server::CommandDispatcher d;
+    server::Store s; server::CommandDispatcher d(s);
     auto out = run(d, cmd({"ECHO"}));
     CHECK(out.rfind("-ERR", 0) == 0);
 }
 
 TEST(cmd_command_empty_array) {
-    server::CommandDispatcher d;
+    server::Store s; server::CommandDispatcher d(s);
     CHECK_EQ(run(d, cmd({"COMMAND"})), std::string("*0\r\n"));
 }
 
 TEST(cmd_unknown) {
-    server::CommandDispatcher d;
+    server::Store s; server::CommandDispatcher d(s);
     auto out = run(d, cmd({"FOOBAR"}));
     CHECK(out.rfind("-ERR unknown command 'FOOBAR'", 0) == 0);
 }
 
 TEST(cmd_non_array_input_is_error) {
-    server::CommandDispatcher d;
+    server::Store s; server::CommandDispatcher d(s);
     auto out = run(d, resp::make_simple_string("PING"));
     CHECK(out.rfind("-ERR", 0) == 0);
 }
 
 TEST(cmd_empty_array_is_error) {
-    server::CommandDispatcher d;
+    server::Store s; server::CommandDispatcher d(s);
     auto out = run(d, resp::make_array({}));
     CHECK(out.rfind("-ERR", 0) == 0);
+}
+
+// ---------- GET / SET / DEL ----------
+
+TEST(cmd_set_then_get) {
+    server::Store s; server::CommandDispatcher d(s);
+    CHECK_EQ(run(d, cmd({"SET", "foo", "bar"})), std::string("+OK\r\n"));
+    CHECK_EQ(run(d, cmd({"GET", "foo"})), std::string("$3\r\nbar\r\n"));
+}
+
+TEST(cmd_get_missing_returns_null_bulk) {
+    server::Store s; server::CommandDispatcher d(s);
+    CHECK_EQ(run(d, cmd({"GET", "nope"})), std::string("$-1\r\n"));
+}
+
+TEST(cmd_set_wrong_args) {
+    server::Store s; server::CommandDispatcher d(s);
+    CHECK(run(d, cmd({"SET", "foo"})).rfind("-ERR", 0) == 0);
+    CHECK(run(d, cmd({"SET"})).rfind("-ERR", 0) == 0);
+}
+
+TEST(cmd_get_wrong_args) {
+    server::Store s; server::CommandDispatcher d(s);
+    CHECK(run(d, cmd({"GET"})).rfind("-ERR", 0) == 0);
+    CHECK(run(d, cmd({"GET", "a", "b"})).rfind("-ERR", 0) == 0);
+}
+
+TEST(cmd_del_single) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"SET", "x", "1"}));
+    CHECK_EQ(run(d, cmd({"DEL", "x"})), std::string(":1\r\n"));
+    CHECK_EQ(run(d, cmd({"DEL", "x"})), std::string(":0\r\n"));
+}
+
+TEST(cmd_del_multiple) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"SET", "a", "1"}));
+    run(d, cmd({"SET", "b", "2"}));
+    CHECK_EQ(run(d, cmd({"DEL", "a", "b", "c"})), std::string(":2\r\n"));
+}
+
+TEST(cmd_exists) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"SET", "a", "1"}));
+    run(d, cmd({"SET", "b", "2"}));
+    CHECK_EQ(run(d, cmd({"EXISTS", "a", "b", "c"})), std::string(":2\r\n"));
+}
+
+TEST(cmd_type) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"SET", "a", "1"}));
+    CHECK_EQ(run(d, cmd({"TYPE", "a"})), std::string("+string\r\n"));
+    CHECK_EQ(run(d, cmd({"TYPE", "x"})), std::string("+none\r\n"));
+}
+
+TEST(cmd_dbsize) {
+    server::Store s; server::CommandDispatcher d(s);
+    CHECK_EQ(run(d, cmd({"DBSIZE"})), std::string(":0\r\n"));
+    run(d, cmd({"SET", "a", "1"}));
+    run(d, cmd({"SET", "b", "2"}));
+    CHECK_EQ(run(d, cmd({"DBSIZE"})), std::string(":2\r\n"));
+}
+
+TEST(cmd_keys_all) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"SET", "user:1", "alice"}));
+    run(d, cmd({"SET", "user:2", "bob"}));
+    run(d, cmd({"SET", "session:1", "xyz"}));
+
+    auto out = run(d, cmd({"KEYS", "*"}));
+    // Порядок неопределён — проверим что начинается с "*3\r\n" и содержит все три
+    CHECK(out.rfind("*3\r\n", 0) == 0);
+    CHECK(out.find("user:1") != std::string::npos);
+    CHECK(out.find("user:2") != std::string::npos);
+    CHECK(out.find("session:1") != std::string::npos);
+}
+
+TEST(cmd_keys_prefix) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"SET", "user:1", "alice"}));
+    run(d, cmd({"SET", "user:2", "bob"}));
+    run(d, cmd({"SET", "session:1", "xyz"}));
+
+    auto out = run(d, cmd({"KEYS", "user:*"}));
+    CHECK(out.rfind("*2\r\n", 0) == 0);
+    CHECK(out.find("user:1") != std::string::npos);
+    CHECK(out.find("user:2") != std::string::npos);
+    CHECK(out.find("session:1") == std::string::npos);
 }

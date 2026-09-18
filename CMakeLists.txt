@@ -24,6 +24,7 @@ add_library(miniredis_core STATIC
     src/resp/serializer.cpp
     src/resp/parser.cpp
     src/server/command.cpp
+    src/server/store.cpp
 )
 
 target_include_directories(miniredis_core PUBLIC src)
@@ -40,6 +41,7 @@ add_executable(mini-redis-tests
     src/tests/test_parser.cpp
     src/tests/test_command.cpp
     src/tests/test_multiclient.cpp
+    src/tests/test_store.cpp
 )
 target_link_libraries(mini-redis-tests PRIVATE miniredis_core Threads::Threads)
 

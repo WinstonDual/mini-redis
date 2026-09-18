@@ -1,25 +1,36 @@
 #pragma once
 
 #include "resp/value.hpp"
+#include "server/store.hpp"
 
 #include <string>
 
 namespace miniredis::server {
 
-/// Диспетчер команд: принимает RESP-значение (обычно Array от клиента)
-/// и возвращает RESP-ответ для отправки обратно.
+/// Диспетчер команд: принимает RESP-значение (Array от клиента)
+/// и возвращает RESP-ответ.
 ///
-/// Пока команды stateless. В следующих шагах здесь появится доступ к Store.
+/// Держит ссылку на Store — общий на весь сервер.
 class CommandDispatcher {
 public:
-    CommandDispatcher() = default;
+    /// Store должен жить дольше, чем dispatcher.
+    explicit CommandDispatcher(Store& store) : store_(store) {}
 
-    /// Обработать одно входящее значение и вернуть ответ.
+    /// Обработать одно входящее значение.
     /// Никогда не бросает: любые ошибки превращаются в RespValue (Error).
     resp::RespValue dispatch(const resp::RespValue& input) const;
 
 private:
     resp::RespValue handle_array(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_get(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_set(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_del(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_exists(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_keys(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_type(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_dbsize(const std::vector<resp::RespValue>& args) const;
+
+    Store& store_;
 };
 
 } // namespace miniredis::server
