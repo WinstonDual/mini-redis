@@ -24,7 +24,7 @@ void global_init();
 /// Освобождение ресурсов (WSACleanup на Windows).
 void global_cleanup();
 
-/// Простейший TCP-сервер (пока блокирующий, один клиент за раз).
+/// TCP-сервер: каждое соединение обслуживается в отдельном потоке.
 class TcpServer {
 public:
     explicit TcpServer(std::uint16_t port);
@@ -33,6 +33,7 @@ public:
     TcpServer(const TcpServer&) = delete;
     TcpServer& operator=(const TcpServer&) = delete;
 
+    /// Открыть сокет и начать принимать соединения (блокирующий вызов).
     void listen_and_serve();
 
 private:

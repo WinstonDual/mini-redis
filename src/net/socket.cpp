@@ -1,8 +1,11 @@
 #include "net/socket.hpp"
 
+#include <atomic>
 #include <cstring>
 #include <iostream>
+#include <mutex>
 #include <stdexcept>
+#include <thread>
 
 #include "resp/parser.hpp"
 #include "resp/serializer.hpp"
@@ -25,6 +28,18 @@ namespace miniredis::net {
 #ifdef _WIN32
 using socklen_t = int;
 #endif
+
+namespace {
+
+std::mutex g_log_mutex;
+
+/// Потокобезопасный вывод строки в stdout.
+void log_line(const std::string& msg) {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    std::cout << msg << "\n";
+}
+
+} // namespace
 
 static std::string last_error() {
 #ifdef _WIN32
@@ -92,7 +107,7 @@ TcpServer::TcpServer(std::uint16_t port) : port_(port) {
         throw std::runtime_error(msg);
     }
 
-    std::cout << "[mini-redis] listening on port " << port_ << "\n";
+    log_line("[mini-redis] listening on port " + std::to_string(port_));
 }
 
 TcpServer::~TcpServer() {
@@ -103,8 +118,11 @@ TcpServer::~TcpServer() {
 
 namespace {
 
+std::atomic<std::uint64_t> g_client_id_counter{0};
+
 /// Обслуживание одного клиента: читает байты, парсит RESP, отвечает.
-void serve_client(socket_t client) {
+/// Выполняется в отдельном потоке.
+void serve_client(socket_t client, std::uint64_t client_id) {
     resp::RespParser parser;
     server::CommandDispatcher dispatcher;
 
@@ -113,8 +131,7 @@ void serve_client(socket_t client) {
     for (;;) {
         int n = ::recv(client, buf, sizeof(buf), 0);
         if (n <= 0) {
-            // 0 = клиент закрыл соединение; <0 = ошибка.
-            break;
+            break; // клиент отключился или ошибка
         }
 
         parser.feed(std::string_view(buf, static_cast<std::size_t>(n)));
@@ -125,14 +142,16 @@ void serve_client(socket_t client) {
                 std::string bytes = resp::serialize(reply);
                 if (::send(client, bytes.data(),
                            static_cast<int>(bytes.size()), 0) <= 0) {
-                    return; // не смогли отправить — закрываем
+                    log_line("[mini-redis] client #" + std::to_string(client_id)
+                             + " send failed, disconnecting");
+                    return;
                 }
             }
         } catch (const resp::ProtocolError& e) {
             std::string err = resp::serialize(
                 resp::make_error(std::string("ERR Protocol error: ") + e.what()));
             ::send(client, err.data(), static_cast<int>(err.size()), 0);
-            return; // после ошибки протокола соединение закрываем
+            return;
         }
     }
 }
@@ -152,10 +171,15 @@ void TcpServer::listen_and_serve() {
             continue;
         }
 
-        std::cout << "[mini-redis] client connected\n";
-        serve_client(client);
-        close_socket(client);
-        std::cout << "[mini-redis] client disconnected\n";
+        std::uint64_t id = ++g_client_id_counter;
+        log_line("[mini-redis] client #" + std::to_string(id) + " connected");
+
+        // Запускаем поток, который сам закроет сокет в конце.
+        std::thread([client, id]() {
+            serve_client(client, id);
+            close_socket(client);
+            log_line("[mini-redis] client #" + std::to_string(id) + " disconnected");
+        }).detach();
     }
 }
 
