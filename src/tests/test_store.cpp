@@ -297,3 +297,87 @@ TEST(store_wrongtype_push_on_string) {
     auto n = s.list_push_left("k", {"a"});
     CHECK(!n.has_value());
 }
+
+// ---------- Hashes ----------
+
+TEST(store_hash_set_get) {
+    Store s;
+    auto n = s.hash_set("h", {{"a", "1"}, {"b", "2"}});
+    CHECK(n.has_value());
+    CHECK_EQ(*n, std::size_t{2});
+
+    auto va = s.hash_get("h", "a");
+    CHECK(va.has_value());
+    CHECK_EQ(*va, std::string("1"));
+
+    auto miss = s.hash_get("h", "zzz");
+    CHECK(!miss.has_value());
+}
+
+TEST(store_hash_set_update) {
+    Store s;
+    s.hash_set("h", {{"a", "1"}});
+
+    auto n = s.hash_set("h", {{"a", "updated"}, {"b", "new"}});
+    CHECK(n.has_value());
+    CHECK_EQ(*n, std::size_t{1});
+
+    auto va = s.hash_get("h", "a");
+    CHECK(va.has_value());
+    CHECK_EQ(*va, std::string("updated"));
+}
+
+TEST(store_hash_del) {
+    Store s;
+    s.hash_set("h", {{"a", "1"}, {"b", "2"}, {"c", "3"}});
+
+    auto removed = s.hash_del("h", {"a", "c", "zzz"});
+    CHECK(removed.has_value());
+    CHECK_EQ(*removed, std::size_t{2});
+
+    auto len = s.hash_length("h");
+    CHECK(len.has_value());
+    CHECK_EQ(*len, std::size_t{1});
+}
+
+TEST(store_hash_empty_deletes_key) {
+    Store s;
+    s.hash_set("h", {{"a", "1"}});
+    s.hash_del("h", {"a"});
+    CHECK(!s.exists("h"));
+}
+
+TEST(store_hash_exists) {
+    Store s;
+    s.hash_set("h", {{"a", "1"}});
+    auto e1 = s.hash_exists("h", "a");
+    auto e2 = s.hash_exists("h", "b");
+    CHECK(e1.has_value() && *e1);
+    CHECK(e2.has_value() && !*e2);
+}
+
+TEST(store_hash_length_missing) {
+    Store s;
+    auto len = s.hash_length("nope");
+    CHECK(len.has_value());
+    CHECK_EQ(*len, std::size_t{0});
+}
+
+TEST(store_hash_keys_values) {
+    Store s;
+    s.hash_set("h", {{"x", "1"}, {"y", "2"}, {"z", "3"}});
+
+    auto keys = s.hash_keys("h");
+    auto vals = s.hash_values("h");
+    CHECK(keys.has_value());
+    CHECK(vals.has_value());
+    CHECK_EQ(keys->size(), std::size_t{3});
+    CHECK_EQ(vals->size(), std::size_t{3});
+}
+
+TEST(store_hash_wrongtype) {
+    Store s;
+    s.set_string("k", "hello");
+    auto n = s.hash_set("k", {{"a", "1"}});
+    CHECK(!n.has_value());
+}

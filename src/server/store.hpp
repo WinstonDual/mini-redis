@@ -29,10 +29,13 @@ struct ListValue {
     std::deque<std::string> items;
 };
 
-/// Одно из поддерживаемых типов значений.
-/// Порядок альтернатив в variant менять не стоит — на нём основаны некоторые проверки.
-using Value = std::variant<StringValue, ListValue>;
+/// Хэш: field → value.
+struct HashValue {
+    std::unordered_map<std::string, std::string> fields;
+};
 
+/// Одно из поддерживаемых типов значений.
+using Value = std::variant<StringValue, ListValue, HashValue>;
 /// Потокобезопасное in-memory key-value хранилище с поддержкой TTL и типов.
 class Store {
 public:
@@ -98,7 +101,32 @@ public:
     std::optional<std::string> list_pop_right(std::string_view key);
 
     /// Элемент по индексу (с поддержкой отрицательных). nullopt — нет.
+        /// Элемент по индексу (с поддержкой отрицательных). nullopt — нет.
     std::optional<std::string> list_index(std::string_view key, std::int64_t index);
+
+    // ---- Хэши ----
+
+    /// HSET: установить поля. Возвращает число НОВЫХ полей.
+    std::optional<std::size_t>
+    hash_set(std::string_view key,
+             std::vector<std::pair<std::string, std::string>> fields);
+
+    std::optional<std::string>
+    hash_get(std::string_view key, std::string_view field);
+
+    std::optional<std::size_t>
+    hash_del(std::string_view key, std::vector<std::string> fields);
+
+    std::optional<bool>
+    hash_exists(std::string_view key, std::string_view field);
+
+    std::optional<std::size_t> hash_length(std::string_view key);
+
+    std::optional<std::vector<std::pair<std::string, std::string>>>
+    hash_get_all(std::string_view key);
+
+    std::optional<std::vector<std::string>> hash_keys(std::string_view key);
+    std::optional<std::vector<std::string>> hash_values(std::string_view key);
 
     // ---- TTL ----
 

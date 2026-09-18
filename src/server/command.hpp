@@ -40,6 +40,15 @@ private:
     resp::RespValue cmd_lpop(const std::vector<resp::RespValue>& args) const;
     resp::RespValue cmd_rpop(const std::vector<resp::RespValue>& args) const;
     resp::RespValue cmd_lindex(const std::vector<resp::RespValue>& args) const;
+    // --- Hashes ---
+    resp::RespValue cmd_hset(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_hget(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_hdel(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_hexists(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_hlen(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_hgetall(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_hkeys(const std::vector<resp::RespValue>& args) const;
+    resp::RespValue cmd_hvals(const std::vector<resp::RespValue>& args) const;
 
     Store& store_;
 };

@@ -54,6 +54,7 @@ std::string Store::type(std::string_view key) {
 
     if (std::holds_alternative<StringValue>(it->second.value)) return "string";
     if (std::holds_alternative<ListValue>(it->second.value))   return "list";
+    if (std::holds_alternative<HashValue>(it->second.value))   return "hash";
     return "none";
 }
 
@@ -380,6 +381,173 @@ std::int64_t Store::ttl(std::string_view key) {
         *it->second.expire_at - now()).count();
     if (remaining < 0) remaining = 0;
     return remaining;
+}
+
+// ---------- хэши ----------
+
+std::optional<std::size_t>
+Store::hash_set(std::string_view key,
+                std::vector<std::pair<std::string, std::string>> fields) {
+    std::unique_lock lock(mutex_);
+    std::string k(key);
+
+    auto it = data_.find(k);
+    if (it != data_.end() && is_expired_at(it->second.expire_at, now())) {
+        data_.erase(it);
+        it = data_.end();
+    }
+
+    if (it == data_.end()) {
+        Entry e;
+        e.value = HashValue{};
+        it = data_.emplace(std::move(k), std::move(e)).first;
+    }
+
+    auto* hv = std::get_if<HashValue>(&it->second.value);
+    if (!hv) return std::nullopt;
+
+    std::size_t added = 0;
+    for (auto& [f, v] : fields) {
+        auto [fit, inserted] = hv->fields.insert_or_assign(std::move(f), std::move(v));
+        (void)fit;
+        if (inserted) ++added;
+    }
+    return added;
+}
+
+std::optional<std::string>
+Store::hash_get(std::string_view key, std::string_view field) {
+    std::unique_lock lock(mutex_);
+    auto it = data_.find(std::string(key));
+    if (it == data_.end()) return std::nullopt;
+
+    if (is_expired_at(it->second.expire_at, now())) {
+        data_.erase(it);
+        return std::nullopt;
+    }
+
+    auto* hv = std::get_if<HashValue>(&it->second.value);
+    if (!hv) return std::nullopt;
+
+    auto fit = hv->fields.find(std::string(field));
+    if (fit == hv->fields.end()) return std::nullopt;
+    return fit->second;
+}
+
+std::optional<std::size_t>
+Store::hash_del(std::string_view key, std::vector<std::string> fields) {
+    std::unique_lock lock(mutex_);
+    auto it = data_.find(std::string(key));
+    if (it == data_.end()) return std::size_t{0};
+
+    if (is_expired_at(it->second.expire_at, now())) {
+        data_.erase(it);
+        return std::size_t{0};
+    }
+
+    auto* hv = std::get_if<HashValue>(&it->second.value);
+    if (!hv) return std::nullopt;
+
+    std::size_t removed = 0;
+    for (auto& f : fields) {
+        removed += hv->fields.erase(f);
+    }
+
+    if (hv->fields.empty()) data_.erase(it);
+    return removed;
+}
+
+std::optional<bool>
+Store::hash_exists(std::string_view key, std::string_view field) {
+    std::unique_lock lock(mutex_);
+    auto it = data_.find(std::string(key));
+    if (it == data_.end()) return false;
+
+    if (is_expired_at(it->second.expire_at, now())) {
+        data_.erase(it);
+        return false;
+    }
+
+    auto* hv = std::get_if<HashValue>(&it->second.value);
+    if (!hv) return std::nullopt;
+
+    return hv->fields.find(std::string(field)) != hv->fields.end();
+}
+
+std::optional<std::size_t> Store::hash_length(std::string_view key) {
+    std::unique_lock lock(mutex_);
+    auto it = data_.find(std::string(key));
+    if (it == data_.end()) return std::size_t{0};
+
+    if (is_expired_at(it->second.expire_at, now())) {
+        data_.erase(it);
+        return std::size_t{0};
+    }
+
+    auto* hv = std::get_if<HashValue>(&it->second.value);
+    if (!hv) return std::nullopt;
+
+    return hv->fields.size();
+}
+
+std::optional<std::vector<std::pair<std::string, std::string>>>
+Store::hash_get_all(std::string_view key) {
+    std::unique_lock lock(mutex_);
+    auto it = data_.find(std::string(key));
+    if (it == data_.end()) return std::vector<std::pair<std::string, std::string>>{};
+
+    if (is_expired_at(it->second.expire_at, now())) {
+        data_.erase(it);
+        return std::vector<std::pair<std::string, std::string>>{};
+    }
+
+    auto* hv = std::get_if<HashValue>(&it->second.value);
+    if (!hv) return std::nullopt;
+
+    std::vector<std::pair<std::string, std::string>> out;
+    out.reserve(hv->fields.size());
+    for (const auto& [f, v] : hv->fields) {
+        out.emplace_back(f, v);
+    }
+    return out;
+}
+
+std::optional<std::vector<std::string>> Store::hash_keys(std::string_view key) {
+    std::unique_lock lock(mutex_);
+    auto it = data_.find(std::string(key));
+    if (it == data_.end()) return std::vector<std::string>{};
+
+    if (is_expired_at(it->second.expire_at, now())) {
+        data_.erase(it);
+        return std::vector<std::string>{};
+    }
+
+    auto* hv = std::get_if<HashValue>(&it->second.value);
+    if (!hv) return std::nullopt;
+
+    std::vector<std::string> out;
+    out.reserve(hv->fields.size());
+    for (const auto& [f, _] : hv->fields) out.push_back(f);
+    return out;
+}
+
+std::optional<std::vector<std::string>> Store::hash_values(std::string_view key) {
+    std::unique_lock lock(mutex_);
+    auto it = data_.find(std::string(key));
+    if (it == data_.end()) return std::vector<std::string>{};
+
+    if (is_expired_at(it->second.expire_at, now())) {
+        data_.erase(it);
+        return std::vector<std::string>{};
+    }
+
+    auto* hv = std::get_if<HashValue>(&it->second.value);
+    if (!hv) return std::nullopt;
+
+    std::vector<std::string> out;
+    out.reserve(hv->fields.size());
+    for (const auto& [_, v] : hv->fields) out.push_back(v);
+    return out;
 }
 
 } // namespace miniredis::server

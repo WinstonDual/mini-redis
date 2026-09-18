@@ -115,6 +115,15 @@ RespValue CommandDispatcher::handle_array(const std::vector<RespValue>& args) co
     if (cmd == "LPOP")   return cmd_lpop(args);
     if (cmd == "RPOP")   return cmd_rpop(args);
     if (cmd == "LINDEX") return cmd_lindex(args);
+    // --- Hash commands ---
+    if (cmd == "HSET")    return cmd_hset(args);
+    if (cmd == "HGET")    return cmd_hget(args);
+    if (cmd == "HDEL")    return cmd_hdel(args);
+    if (cmd == "HEXISTS") return cmd_hexists(args);
+    if (cmd == "HLEN")    return cmd_hlen(args);
+    if (cmd == "HGETALL") return cmd_hgetall(args);
+    if (cmd == "HKEYS")   return cmd_hkeys(args);
+    if (cmd == "HVALS")   return cmd_hvals(args);
 
     return resp::make_error("ERR unknown command '" + cmd + "'");
 }
@@ -432,6 +441,139 @@ RespValue CommandDispatcher::cmd_lindex(const std::vector<RespValue>& args) cons
     auto v = store_.list_index(*key, *idx);
     if (!v) return resp::make_null_bulk();
     return resp::make_bulk_string(std::move(*v));
+}
+
+// ---------- Hashes ----------
+
+RespValue CommandDispatcher::cmd_hset(const std::vector<RespValue>& args) const {
+    if (args.size() < 4 || (args.size() % 2) != 0) {
+        return resp::make_error("ERR wrong number of arguments for 'hset'");
+    }
+    auto key = as_string_view(args[1]);
+    if (!key) return resp::make_error("ERR wrong number of arguments for 'hset'");
+
+    std::vector<std::pair<std::string, std::string>> fields;
+    for (std::size_t i = 2; i + 1 < args.size(); i += 2) {
+        auto f = as_string_view(args[i]);
+        auto v = as_string_view(args[i + 1]);
+        if (!f || !v) return resp::make_error("ERR wrong number of arguments for 'hset'");
+        fields.emplace_back(std::string(*f), std::string(*v));
+    }
+
+    auto added = store_.hash_set(*key, std::move(fields));
+    if (!added) return resp::make_error(WRONGTYPE_MSG);
+    return resp::make_integer(static_cast<std::int64_t>(*added));
+}
+
+RespValue CommandDispatcher::cmd_hget(const std::vector<RespValue>& args) const {
+    if (args.size() != 3) {
+        return resp::make_error("ERR wrong number of arguments for 'hget'");
+    }
+    auto key   = as_string_view(args[1]);
+    auto field = as_string_view(args[2]);
+    if (!key || !field) return resp::make_error("ERR wrong number of arguments for 'hget'");
+
+    std::string t = store_.type(*key);
+    if (t != "hash" && t != "none") return resp::make_error(WRONGTYPE_MSG);
+
+    auto v = store_.hash_get(*key, *field);
+    if (!v) return resp::make_null_bulk();
+    return resp::make_bulk_string(std::move(*v));
+}
+
+RespValue CommandDispatcher::cmd_hdel(const std::vector<RespValue>& args) const {
+    if (args.size() < 3) {
+        return resp::make_error("ERR wrong number of arguments for 'hdel'");
+    }
+    auto key = as_string_view(args[1]);
+    if (!key) return resp::make_error("ERR wrong number of arguments for 'hdel'");
+
+    std::vector<std::string> fields;
+    for (std::size_t i = 2; i < args.size(); ++i) {
+        auto f = as_string_view(args[i]);
+        if (!f) return resp::make_error("ERR wrong number of arguments for 'hdel'");
+        fields.emplace_back(*f);
+    }
+
+    auto removed = store_.hash_del(*key, std::move(fields));
+    if (!removed) return resp::make_error(WRONGTYPE_MSG);
+    return resp::make_integer(static_cast<std::int64_t>(*removed));
+}
+
+RespValue CommandDispatcher::cmd_hexists(const std::vector<RespValue>& args) const {
+    if (args.size() != 3) {
+        return resp::make_error("ERR wrong number of arguments for 'hexists'");
+    }
+    auto key   = as_string_view(args[1]);
+    auto field = as_string_view(args[2]);
+    if (!key || !field) return resp::make_error("ERR wrong number of arguments for 'hexists'");
+
+    auto exists = store_.hash_exists(*key, *field);
+    if (!exists) return resp::make_error(WRONGTYPE_MSG);
+    return resp::make_integer(*exists ? 1 : 0);
+}
+
+RespValue CommandDispatcher::cmd_hlen(const std::vector<RespValue>& args) const {
+    if (args.size() != 2) {
+        return resp::make_error("ERR wrong number of arguments for 'hlen'");
+    }
+    auto key = as_string_view(args[1]);
+    if (!key) return resp::make_error("ERR wrong number of arguments for 'hlen'");
+
+    auto len = store_.hash_length(*key);
+    if (!len) return resp::make_error(WRONGTYPE_MSG);
+    return resp::make_integer(static_cast<std::int64_t>(*len));
+}
+
+RespValue CommandDispatcher::cmd_hgetall(const std::vector<RespValue>& args) const {
+    if (args.size() != 2) {
+        return resp::make_error("ERR wrong number of arguments for 'hgetall'");
+    }
+    auto key = as_string_view(args[1]);
+    if (!key) return resp::make_error("ERR wrong number of arguments for 'hgetall'");
+
+    auto pairs = store_.hash_get_all(*key);
+    if (!pairs) return resp::make_error(WRONGTYPE_MSG);
+
+    std::vector<RespValue> out;
+    out.reserve(pairs->size() * 2);
+    for (auto& [f, v] : *pairs) {
+        out.push_back(resp::make_bulk_string(std::move(f)));
+        out.push_back(resp::make_bulk_string(std::move(v)));
+    }
+    return resp::make_array(std::move(out));
+}
+
+RespValue CommandDispatcher::cmd_hkeys(const std::vector<RespValue>& args) const {
+    if (args.size() != 2) {
+        return resp::make_error("ERR wrong number of arguments for 'hkeys'");
+    }
+    auto key = as_string_view(args[1]);
+    if (!key) return resp::make_error("ERR wrong number of arguments for 'hkeys'");
+
+    auto fields = store_.hash_keys(*key);
+    if (!fields) return resp::make_error(WRONGTYPE_MSG);
+
+    std::vector<RespValue> out;
+    out.reserve(fields->size());
+    for (auto& f : *fields) out.push_back(resp::make_bulk_string(std::move(f)));
+    return resp::make_array(std::move(out));
+}
+
+RespValue CommandDispatcher::cmd_hvals(const std::vector<RespValue>& args) const {
+    if (args.size() != 2) {
+        return resp::make_error("ERR wrong number of arguments for 'hvals'");
+    }
+    auto key = as_string_view(args[1]);
+    if (!key) return resp::make_error("ERR wrong number of arguments for 'hvals'");
+
+    auto values = store_.hash_values(*key);
+    if (!values) return resp::make_error(WRONGTYPE_MSG);
+
+    std::vector<RespValue> out;
+    out.reserve(values->size());
+    for (auto& v : *values) out.push_back(resp::make_bulk_string(std::move(v)));
+    return resp::make_array(std::move(out));
 }
 
 } // namespace miniredis::server

@@ -287,3 +287,78 @@ TEST(cmd_type_list) {
     run(d, cmd({"RPUSH", "k", "a"}));
     CHECK_EQ(run(d, cmd({"TYPE", "k"})), std::string("+list\r\n"));
 }
+
+// ---------- Hashes ----------
+
+TEST(cmd_hset_hget) {
+    server::Store s; server::CommandDispatcher d(s);
+    CHECK_EQ(run(d, cmd({"HSET", "h", "a", "1", "b", "2"})), std::string(":2\r\n"));
+    CHECK_EQ(run(d, cmd({"HGET", "h", "a"})), std::string("$1\r\n1\r\n"));
+    CHECK_EQ(run(d, cmd({"HGET", "h", "zzz"})), std::string("$-1\r\n"));
+}
+
+TEST(cmd_hset_update) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"HSET", "h", "a", "1"}));
+    CHECK_EQ(run(d, cmd({"HSET", "h", "a", "updated", "b", "new"})), std::string(":1\r\n"));
+    CHECK_EQ(run(d, cmd({"HGET", "h", "a"})), std::string("$7\r\nupdated\r\n"));
+}
+
+TEST(cmd_hdel) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"HSET", "h", "a", "1", "b", "2", "c", "3"}));
+    CHECK_EQ(run(d, cmd({"HDEL", "h", "a", "c", "zzz"})), std::string(":2\r\n"));
+    CHECK_EQ(run(d, cmd({"HLEN", "h"})), std::string(":1\r\n"));
+}
+
+TEST(cmd_hexists) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"HSET", "h", "a", "1"}));
+    CHECK_EQ(run(d, cmd({"HEXISTS", "h", "a"})), std::string(":1\r\n"));
+    CHECK_EQ(run(d, cmd({"HEXISTS", "h", "b"})), std::string(":0\r\n"));
+}
+
+TEST(cmd_hlen) {
+    server::Store s; server::CommandDispatcher d(s);
+    CHECK_EQ(run(d, cmd({"HLEN", "nope"})), std::string(":0\r\n"));
+    run(d, cmd({"HSET", "h", "a", "1", "b", "2"}));
+    CHECK_EQ(run(d, cmd({"HLEN", "h"})), std::string(":2\r\n"));
+}
+
+TEST(cmd_hgetall) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"HSET", "h", "a", "1"}));
+    auto out = run(d, cmd({"HGETALL", "h"}));
+    CHECK(out.rfind("*2\r\n", 0) == 0);
+    CHECK(out.find("a") != std::string::npos);
+    CHECK(out.find("1") != std::string::npos);
+}
+
+TEST(cmd_hkeys_hvals) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"HSET", "h", "x", "10", "y", "20"}));
+    auto keys = run(d, cmd({"HKEYS", "h"}));
+    auto vals = run(d, cmd({"HVALS", "h"}));
+    CHECK(keys.rfind("*2\r\n", 0) == 0);
+    CHECK(vals.rfind("*2\r\n", 0) == 0);
+}
+
+TEST(cmd_hash_wrongtype) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"SET", "k", "hello"}));
+    auto out = run(d, cmd({"HSET", "k", "a", "1"}));
+    CHECK(out.rfind("-WRONGTYPE", 0) == 0);
+}
+
+TEST(cmd_get_on_hash_wrongtype) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"HSET", "h", "a", "1"}));
+    auto out = run(d, cmd({"GET", "h"}));
+    CHECK(out.rfind("-WRONGTYPE", 0) == 0);
+}
+
+TEST(cmd_type_hash) {
+    server::Store s; server::CommandDispatcher d(s);
+    run(d, cmd({"HSET", "h", "a", "1"}));
+    CHECK_EQ(run(d, cmd({"TYPE", "h"})), std::string("+hash\r\n"));
+}
